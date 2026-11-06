@@ -33,6 +33,7 @@
   let query = "";
   let view = "geral";
   let onceOpen = false;
+  let baixaOpen = false;
   let GERAL = null;
 
   function parseISO(iso) {
@@ -428,8 +429,7 @@
       .slice(0, 10);
     const baixa = songList
       .filter((s) => s.n >= 2 && s.when)
-      .sort((a, b) => a.when.localeCompare(b.when) || a.n - b.n || byTitle(a, b))
-      .slice(0, 10);
+      .sort((a, b) => a.when.localeCompare(b.when) || a.n - b.n || byTitle(a, b));
     const once = songList
       .filter((s) => s.n === 1)
       .sort((a, b) => (a.when || "").localeCompare(b.when || "") || byTitle(a, b));
@@ -474,13 +474,17 @@
         (it) => `<div class="once-row">${personLine(it)}<div class="when">${esc(fmtDate(it.when))}</div></div>`
       )
       .join("");
-    const baixaRows = g.baixa
+    const baixaShown = baixaOpen ? g.baixa : g.baixa.slice(0, 10);
+    const baixaRows = baixaShown
       .map(
         (it) => `<div class="baixa-row">${personLine(it)}<div class="when"><span class="times">${it.n}×</span> · ${esc(fmtDate(it.when))} · ${esc(agoLabel(it.when))}</div></div>`
       )
       .join("");
-    const more = g.once.length > 10
+    const onceMore = g.once.length > 10
       ? `<button type="button" class="once-more" data-once-toggle>${onceOpen ? "Ver menos" : "Ver todas"}</button>`
+      : "";
+    const baixaMore = g.baixa.length > 10
+      ? `<button type="button" class="once-more" data-baixa-toggle>${baixaOpen ? "Ver menos" : "Ver todas"}</button>`
       : "";
     $("#geral").innerHTML = `
       <p class="geral-summary">${g.cultos} cultos · ${g.songs} músicas · ${g.artists} artistas · ${esc(g.years)}</p>
@@ -493,10 +497,14 @@
           <h3>Top 10 artistas</h3>
           ${geralBars(g.topArtists, "artists")}
         </div>
-        <div class="card panel span-2">
-          <h3>Em baixa</h3>
+        <div class="card panel span-2" id="baixaBlock">
+          <div class="panel-head">
+            <h3>Em baixa</h3>
+            <span class="meta">${g.baixa.length} de ${g.songs} músicas</span>
+          </div>
           <p class="panel-note">Cantadas ao menos 2 vezes, da que está há mais tempo sem voltar</p>
           <div class="baixa-list">${baixaRows || `<p class="empty">Sem dados</p>`}</div>
+          ${baixaMore}
         </div>
         <div class="card panel span-2" id="onceBlock">
           <div class="panel-head">
@@ -504,7 +512,7 @@
             <span class="meta">${g.once.length} de ${g.songs} músicas</span>
           </div>
           <div class="once-list">${onceRows || `<p class="empty">Nenhuma música tocada uma vez só</p>`}</div>
-          ${more}
+          ${onceMore}
         </div>
       </div>`;
   }
@@ -597,10 +605,15 @@
       setView(next);
     });
     $("#geral").addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-once-toggle]");
-      if (!btn) return;
-      onceOpen = !onceOpen;
-      renderGeral();
+      if (e.target.closest("[data-once-toggle]")) {
+        onceOpen = !onceOpen;
+        renderGeral();
+        return;
+      }
+      if (e.target.closest("[data-baixa-toggle]")) {
+        baixaOpen = !baixaOpen;
+        renderGeral();
+      }
     });
     window.addEventListener("hashchange", () => readHash());
     const input = $("#q");
