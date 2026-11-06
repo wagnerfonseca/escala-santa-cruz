@@ -143,16 +143,22 @@ button, input, select { font: inherit; color: inherit; }
   align-items: center;
   gap: .55rem;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .year-pills {
   display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: .25rem;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: .2rem;
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
 }
 .year-pills::-webkit-scrollbar { display: none; }
@@ -166,6 +172,14 @@ button, input, select { font: inherit; color: inherit; }
   font-weight: 500;
   color: var(--muted);
   cursor: pointer;
+  white-space: nowrap;
+}
+.year-pills .tab-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  align-self: stretch;
+  margin: .2rem .1rem;
+  background: var(--line-strong);
 }
 .year-pills button[aria-pressed="true"] {
   background: var(--accent);
@@ -214,6 +228,26 @@ button, input, select { font: inherit; color: inherit; }
   .year-pills { width: 100%; }
   .search { width: 100%; }
   .search input { width: 100%; }
+}
+@media (max-width: 520px) {
+  .year-pills {
+    gap: .12rem;
+    padding: .15rem;
+  }
+  .year-pills button {
+    padding: .32rem .38rem;
+    font-size: .72rem;
+  }
+}
+
+/* One view at a time. Search replaces whichever view is open. */
+body[data-view="proximo"] #dash,
+body[data-view="proximo"] #months,
+body[data-view="year"] #hero,
+body.is-searching #hero,
+body.is-searching #dash,
+body.is-searching #months {
+  display: none !important;
 }
 
 main { padding: 1.5rem 0 3.5rem; }

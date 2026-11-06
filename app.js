@@ -31,6 +31,7 @@
   let DATA = null;
   let year = 2026;
   let query = "";
+  let view = "proximo";
 
   function parseISO(iso) {
     if (!iso || typeof iso !== "string") return null;
@@ -382,52 +383,103 @@
       </div>`;
   }
 
-  function setYear(y) {
-    year = y;
-    $$(".year-pills button").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.year) === y)));
-    renderDash();
-    renderMonths();
+  function hashFor(v) {
+    return v === "proximo" ? "#proximo" : `#${v}`;
   }
 
-  function renderAll() {
-    renderHero();
-    renderDash();
-    renderMonths();
+  function parseHash() {
+    const raw = decodeURIComponent((location.hash || "").replace(/^#/, "")).trim().toLowerCase();
+    if (!raw || raw === "proximo") return "proximo";
+    if (/^\d{4}$/.test(raw)) {
+      const y = Number(raw);
+      if ((DATA.anos || []).includes(y)) return y;
+    }
+    return null;
+  }
+
+  function scrollTabIntoView(btn) {
+    const scroller = btn.parentElement;
+    if (!scroller) return;
+    const s = scroller.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    if (b.left < s.left + 4) scroller.scrollLeft -= s.left - b.left + 8;
+    else if (b.right > s.right - 4) scroller.scrollLeft += b.right - s.right + 8;
+  }
+
+  function syncTabs() {
+    $$("#viewTabs button").forEach((b) => {
+      const on = b.dataset.view === "proximo" ? view === "proximo" : Number(b.dataset.view) === view;
+      b.setAttribute("aria-pressed", String(on));
+      if (on) scrollTabIntoView(b);
+    });
+  }
+
+  function showView() {
+    const searching = query.trim().length >= 2;
+    document.body.classList.toggle("is-searching", searching);
+    document.body.dataset.view = view === "proximo" ? "proximo" : "year";
+    syncTabs();
     renderSearch();
-    const upd = DATA.atualizadoEm ? DATA.atualizadoEm.replace("T", " ").slice(0, 16) : "";
-    $("#updated").textContent = upd ? `Atualizado em ${upd} (America/Sao_Paulo)` : "";
+    if (searching) return;
+    if (view === "proximo") renderHero();
+    else {
+      year = view;
+      renderDash();
+      renderMonths();
+    }
+  }
+
+  function setView(next, { updateHash = true } = {}) {
+    view = next;
+    if (typeof next === "number") year = next;
+    showView();
+    if (!updateHash) return;
+    const hash = hashFor(next);
+    if (location.hash !== hash) location.hash = hash;
+  }
+
+  function readHash() {
+    const parsed = parseHash();
+    if (parsed == null) {
+      if (location.hash !== "#proximo") history.replaceState(null, "", "#proximo");
+      setView("proximo", { updateHash: false });
+      return;
+    }
+    if (!location.hash) history.replaceState(null, "", "#proximo");
+    setView(parsed, { updateHash: false });
   }
 
   async function init() {
     const res = await fetch("dados.json");
     DATA = await res.json();
     $("#brandTitle").textContent = DATA.titulo;
-    const pills = $("#yearPills");
-    pills.innerHTML = (DATA.anos || [])
-      .map((y) => `<button type="button" data-year="${y}" aria-pressed="${y === year}">${y}</button>`)
-      .join("");
-    pills.addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-year]");
+    const tabs = $("#viewTabs");
+    tabs.insertAdjacentHTML(
+      "beforeend",
+      (DATA.anos || [])
+        .map((y) => `<button type="button" role="tab" data-view="${y}" aria-pressed="false">${y}</button>`)
+        .join("")
+    );
+    tabs.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-view]");
       if (!btn) return;
-      setYear(Number(btn.dataset.year));
+      const next = btn.dataset.view === "proximo" ? "proximo" : Number(btn.dataset.view);
+      setView(next);
     });
+    window.addEventListener("hashchange", () => readHash());
     const input = $("#q");
     let t = null;
     input.addEventListener("input", () => {
       clearTimeout(t);
       t = setTimeout(() => {
         query = input.value;
-        renderSearch();
+        showView();
       }, 120);
     });
-    // default year: current year if present, else last
-    const cy = todayLocal().getFullYear();
-    year = (DATA.anos || []).includes(cy) ? cy : DATA.anos[DATA.anos.length - 1];
-    setYear(year);
-    renderHero();
     $("#updated").textContent = DATA.atualizadoEm
       ? `Atualizado em ${DATA.atualizadoEm.replace("T", " ").slice(0, 16)} (America/Sao_Paulo)`
       : "";
+    readHash();
   }
 
   init().catch((err) => {
