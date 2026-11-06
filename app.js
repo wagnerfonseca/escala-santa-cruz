@@ -31,7 +31,9 @@
   let DATA = null;
   let year = 2026;
   let query = "";
-  let view = "proximo";
+  let view = "geral";
+  let onceOpen = false;
+  let GERAL = null;
 
   function parseISO(iso) {
     if (!iso || typeof iso !== "string") return null;
@@ -67,15 +69,6 @@
     return monthsOfYear(y).flatMap((m) =>
       (m.cultos || []).map((c) => ({ ...c, mesId: m.id, mesNome: m.nome }))
     );
-  }
-
-  function nextService() {
-    const t = todayLocal();
-    const all = DATA.meses
-      .flatMap((m) => (m.cultos || []).map((c) => ({ ...c, mesId: m.id, mesNome: m.nome })))
-      .filter((c) => { const d = parseISO(c.data); return d && d >= t; })
-      .sort((a, b) => a.data.localeCompare(b.data));
-    return all[0] || null;
   }
 
   function currentMonth() {
@@ -136,25 +129,6 @@
     };
   }
 
-  function renderBandChips(banda) {
-    if (!banda) return `<span class="empty">Banda não informada</span>`;
-    const chips = INSTRUMENTS.map(([k, label]) => {
-      const who = (banda[k] || "").trim();
-      if (!who) return "";
-      return `<span class="chip ${INSTRUMENT_CLASS[k]}"><em>${esc(label)}</em>${esc(who)}</span>`;
-    }).filter(Boolean);
-    return chips.join("") || `<span class="empty">Banda não informada</span>`;
-  }
-
-  function renderBandGrid(banda) {
-    return INSTRUMENTS.map(([k, label]) => {
-      const who = (banda?.[k] || "").trim();
-      const empty = !who;
-      const cls = empty ? "band-item is-empty" : `band-item ${INSTRUMENT_CLASS[k]}`;
-      return `<div class="${cls}"><span class="role">${esc(label)}</span><span class="who">${empty ? "—" : esc(who)}</span></div>`;
-    }).join("");
-  }
-
   function renderSongs(musicas) {
     if (!musicas || !musicas.length) return `<p class="empty">Sem músicas listadas</p>`;
     return musicas
@@ -164,56 +138,6 @@
         return `<div class="song-row ${mc}"><div class="min"><span class="dot" aria-hidden="true"></span>${esc(s.ministerio || "")}</div><div><div class="tit">${esc(s.titulo || "")}</div>${art}</div></div>`;
       })
       .join("");
-  }
-
-  function renderHero() {
-    const next = nextService();
-    const month = currentMonth();
-    const hero = $("#hero");
-    if (!next && !month) {
-      hero.innerHTML = `<div class="card card-pad"><p class="empty">Nenhum culto encontrado.</p></div>`;
-      return;
-    }
-
-    const focus = next || (month?.cultos || [])[0];
-    const monthBlock = month
-      ? `<div class="card card-pad">
-          <div class="section-title" style="margin-bottom:.65rem"><h2>Mês atual</h2><span class="meta">${esc(month.nome)}${month.completo ? "" : " · parcial"}</span></div>
-          <div class="month-sundays">
-            ${(month.cultos || [])
-              .map((c) => {
-                const active = next && c.data === next.data ? " is-next" : "";
-                const obs = isSantaCeia(c.observacao)
-                  ? `<span class="badge santa-ceia">${esc(c.observacao)}</span>`
-                  : (c.observacao ? `<span class="badge">${esc(c.observacao)}</span>` : "");
-                return `<div class="sunday-mini${active}">
-                  <header><strong>${esc(fmtDay(c.data))}</strong>${obs}</header>
-                  <div class="chips">${renderBandChips(c.banda)}</div>
-                </div>`;
-              })
-              .join("")}
-          </div>
-        </div>`
-      : "";
-
-    const obsBadge = focus.observacao
-      ? `<span class="badge ${isSantaCeia(focus.observacao) ? "santa-ceia" : "accent"}">${esc(focus.observacao)}</span>`
-      : "";
-    hero.innerHTML = `
-      <div class="card card-pad hero-next">
-        <div class="section-title"><h2>Próximo culto</h2><span class="meta">${esc(focus.mesNome || "")}</span></div>
-        <h3>${esc(fmtDay(focus.data))}</h3>
-        <div class="badge-row">
-          ${obsBadge}
-          <span class="badge">Domingo</span>
-        </div>
-        <div class="band-grid">${renderBandGrid(focus.banda)}</div>
-        <div style="margin-top:1rem">
-          <div class="section-title"><h2>Repertório</h2></div>
-          <div class="songs-list">${renderSongs(focus.musicas)}</div>
-        </div>
-      </div>
-      ${monthBlock}`;
   }
 
   function barList(items, variant) {
@@ -383,13 +307,219 @@
       </div>`;
   }
 
+  function normTitle(s) {
+    return String(s || "")
+      .normalize("NFD")
+      .replace(/\p{M}+/gu, "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function songParts(title) {
+    const raw = String(title || "").trim();
+    if (!raw) return [];
+    return raw.split(/\s*\+\s*/).map((p) => p.trim()).filter((p) => {
+      const k = normTitle(p);
+      return k && k !== "-" && k !== "—" && k !== "–";
+    });
+  }
+
+  function bumpCount(map, label) {
+    const key = label.trim();
+    if (!key) return;
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+
+  function bestLabel(map) {
+    let best = "";
+    let n = -1;
+    for (const [label, count] of map) {
+      if (count > n || (count === n && label.localeCompare(best, "pt") < 0)) {
+        best = label;
+        n = count;
+      }
+    }
+    return best;
+  }
+
+  function fmtDate(iso) {
+    const dt = parseISO(iso);
+    if (!dt) return "—";
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}/${dt.getFullYear()}`;
+  }
+
+  function monthsAgo(iso) {
+    const dt = parseISO(iso);
+    const t = todayLocal();
+    if (!dt) return 0;
+    let m = (t.getFullYear() - dt.getFullYear()) * 12 + (t.getMonth() - dt.getMonth());
+    if (t.getDate() < dt.getDate()) m -= 1;
+    return Math.max(0, m);
+  }
+
+  function agoLabel(iso) {
+    const m = monthsAgo(iso);
+    if (m <= 0) return "há menos de 1 mês";
+    if (m === 1) return "há 1 mês";
+    return `há ${m} meses`;
+  }
+
+  function yearsCovered(values) {
+    const ys = [...values].sort((a, b) => a - b);
+    if (!ys.length) return "";
+    if (ys.length === 1) return String(ys[0]);
+    const contig = ys.every((y, i) => i === 0 || y === ys[i - 1] + 1);
+    return contig ? `${ys[0]}–${ys[ys.length - 1]}` : ys.join(", ");
+  }
+
+  function buildGeral() {
+    const songs = new Map();
+    const artists = new Map();
+    let cultos = 0;
+    const years = new Set();
+    for (const m of DATA.meses || []) {
+      for (const c of m.cultos || []) {
+        cultos += 1;
+        if (m.ano) years.add(m.ano);
+        const dt = c.data || "";
+        for (const s of c.musicas || []) {
+          const art = (s.artista || "").trim();
+          const artKey = normTitle(art);
+          if (artKey && artKey !== "-" && artKey !== "—" && artKey !== "–") {
+            let arec = artists.get(artKey);
+            if (!arec) {
+              arec = { n: 0, labels: new Map() };
+              artists.set(artKey, arec);
+            }
+            arec.n += 1;
+            bumpCount(arec.labels, art);
+          }
+          for (const part of songParts(s.titulo)) {
+            const key = normTitle(part);
+            if (!key) continue;
+            let rec = songs.get(key);
+            if (!rec) {
+              rec = { n: 0, labels: new Map(), arts: new Map(), when: "" };
+              songs.set(key, rec);
+            }
+            rec.n += 1;
+            bumpCount(rec.labels, part);
+            if (art) bumpCount(rec.arts, art);
+            if (dt && (!rec.when || dt > rec.when)) rec.when = dt;
+            if (dt && rec.n === 1) rec.when = dt;
+          }
+        }
+      }
+    }
+    const songList = [...songs.values()].map((rec) => ({
+      title: bestLabel(rec.labels),
+      artist: bestLabel(rec.arts),
+      n: rec.n,
+      when: rec.when,
+    }));
+    const byTitle = (a, b) => a.title.localeCompare(b.title, "pt");
+    const topSongs = songList.slice().sort((a, b) => b.n - a.n || byTitle(a, b)).slice(0, 10);
+    const topArtists = [...artists.values()]
+      .map((rec) => ({ title: bestLabel(rec.labels), n: rec.n }))
+      .sort((a, b) => b.n - a.n || a.title.localeCompare(b.title, "pt"))
+      .slice(0, 10);
+    const baixa = songList
+      .filter((s) => s.n >= 2 && s.when)
+      .sort((a, b) => a.when.localeCompare(b.when) || a.n - b.n || byTitle(a, b))
+      .slice(0, 10);
+    const once = songList
+      .filter((s) => s.n === 1)
+      .sort((a, b) => (a.when || "").localeCompare(b.when || "") || byTitle(a, b));
+    return {
+      cultos,
+      songs: songList.length,
+      artists: artists.size,
+      years: yearsCovered(years),
+      topSongs,
+      topArtists,
+      baixa,
+      once,
+    };
+  }
+
+  function geralBars(items, variant) {
+    if (!items.length) return `<p class="empty">Sem dados</p>`;
+    const max = Math.max(...items.map((it) => it.n), 1);
+    return `<div class="bar-list bars-${variant}">${items
+      .map((it) => {
+        const art = it.artist ? `<span class="a">${esc(it.artist)}</span>` : "";
+        return `<div class="bar-row${it.artist ? " has-art" : ""}">
+          <div class="name"><span class="t">${esc(it.title)}</span>${art}</div>
+          <div class="val">${it.n}×</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.max(4, (it.n / max) * 100)}%"></div></div>
+        </div>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function personLine(it) {
+    const art = it.artist ? `<span class="a">${esc(it.artist)}</span>` : "";
+    return `<div class="name"><span class="t">${esc(it.title)}</span>${art}</div>`;
+  }
+
+  function renderGeral() {
+    if (!GERAL) GERAL = buildGeral();
+    const g = GERAL;
+    const shown = onceOpen ? g.once : g.once.slice(0, 10);
+    const onceRows = shown
+      .map(
+        (it) => `<div class="once-row">${personLine(it)}<div class="when">${esc(fmtDate(it.when))}</div></div>`
+      )
+      .join("");
+    const baixaRows = g.baixa
+      .map(
+        (it) => `<div class="baixa-row">${personLine(it)}<div class="when"><span class="times">${it.n}×</span> · ${esc(fmtDate(it.when))} · ${esc(agoLabel(it.when))}</div></div>`
+      )
+      .join("");
+    const more = g.once.length > 10
+      ? `<button type="button" class="once-more" data-once-toggle>${onceOpen ? "Ver menos" : "Ver todas"}</button>`
+      : "";
+    $("#geral").innerHTML = `
+      <p class="geral-summary">${g.cultos} cultos · ${g.songs} músicas · ${g.artists} artistas · ${esc(g.years)}</p>
+      <div class="geral-grid">
+        <div class="card panel">
+          <h3>Top 10 músicas</h3>
+          ${geralBars(g.topSongs, "songs")}
+        </div>
+        <div class="card panel">
+          <h3>Top 10 artistas</h3>
+          ${geralBars(g.topArtists, "artists")}
+        </div>
+        <div class="card panel span-2">
+          <h3>Em baixa</h3>
+          <p class="panel-note">Cantadas ao menos 2 vezes, da que está há mais tempo sem voltar</p>
+          <div class="baixa-list">${baixaRows || `<p class="empty">Sem dados</p>`}</div>
+        </div>
+        <div class="card panel span-2" id="onceBlock">
+          <div class="panel-head">
+            <h3>Tocadas uma vez só</h3>
+            <span class="meta">${g.once.length} de ${g.songs} músicas</span>
+          </div>
+          <div class="once-list">${onceRows || `<p class="empty">Nenhuma música tocada uma vez só</p>`}</div>
+          ${more}
+        </div>
+      </div>`;
+  }
+
   function hashFor(v) {
-    return v === "proximo" ? "#proximo" : `#${v}`;
+    return v === "geral" ? "#geral" : `#${v}`;
+  }
+
+  function hashRaw() {
+    return decodeURIComponent((location.hash || "").replace(/^#/, "")).trim().toLowerCase();
   }
 
   function parseHash() {
-    const raw = decodeURIComponent((location.hash || "").replace(/^#/, "")).trim().toLowerCase();
-    if (!raw || raw === "proximo") return "proximo";
+    const raw = hashRaw();
+    if (!raw || raw === "geral" || raw === "proximo" || raw === "mes") return "geral";
     if (/^\d{4}$/.test(raw)) {
       const y = Number(raw);
       if ((DATA.anos || []).includes(y)) return y;
@@ -408,7 +538,7 @@
 
   function syncTabs() {
     $$("#viewTabs button").forEach((b) => {
-      const on = b.dataset.view === "proximo" ? view === "proximo" : Number(b.dataset.view) === view;
+      const on = b.dataset.view === "geral" ? view === "geral" : Number(b.dataset.view) === view;
       b.setAttribute("aria-pressed", String(on));
       if (on) scrollTabIntoView(b);
     });
@@ -417,11 +547,11 @@
   function showView() {
     const searching = query.trim().length >= 2;
     document.body.classList.toggle("is-searching", searching);
-    document.body.dataset.view = view === "proximo" ? "proximo" : "year";
+    document.body.dataset.view = view === "geral" ? "geral" : "year";
     syncTabs();
     renderSearch();
     if (searching) return;
-    if (view === "proximo") renderHero();
+    if (view === "geral") renderGeral();
     else {
       year = view;
       renderDash();
@@ -440,12 +570,12 @@
 
   function readHash() {
     const parsed = parseHash();
-    if (parsed == null) {
-      if (location.hash !== "#proximo") history.replaceState(null, "", "#proximo");
-      setView("proximo", { updateHash: false });
+    const raw = hashRaw();
+    if (parsed == null || !location.hash || raw === "proximo" || raw === "mes") {
+      if (location.hash !== "#geral") history.replaceState(null, "", "#geral");
+      setView("geral", { updateHash: false });
       return;
     }
-    if (!location.hash) history.replaceState(null, "", "#proximo");
     setView(parsed, { updateHash: false });
   }
 
@@ -463,8 +593,14 @@
     tabs.addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-view]");
       if (!btn) return;
-      const next = btn.dataset.view === "proximo" ? "proximo" : Number(btn.dataset.view);
+      const next = btn.dataset.view === "geral" ? "geral" : Number(btn.dataset.view);
       setView(next);
+    });
+    $("#geral").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-once-toggle]");
+      if (!btn) return;
+      onceOpen = !onceOpen;
+      renderGeral();
     });
     window.addEventListener("hashchange", () => readHash());
     const input = $("#q");
